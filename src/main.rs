@@ -32,10 +32,12 @@ fn is_elf(path: &OsStr) -> Result<bool, Box<dyn Error>> {
 }
 
 fn xor_enc_dec(input: Vec<u8>) -> Vec<u8> {
-    // Loop through entire input and perform XOR (exclusive-OR) operation on each byte
+    // Loop through all bytes in file buffer and perform XOR (exclusive-OR) operation on each byte
     // Modulus '%' allows us to wrap the computed index within XOR_KEY range, so we never go out of bounds
     // since modulus arithmetric says computed index must be between 0 and XOR_KEY.len() - 1
     // a % b = c where c has possible answer range (0 through b-1)
+
+    // If file buffer is encrypted with our XOR_KEY, this will decrypt.  Otherwise it will encrypt.
 
     input
         .iter()
